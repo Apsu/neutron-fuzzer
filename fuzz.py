@@ -150,7 +150,7 @@ if __name__ == "__main__":
         # TODO: Check option values
 
         # Read openrc and parse key=value into key:value
-        with open("openrc") as file:
+        with open("~/openrc") as file:
             creds = dict(x.strip().lstrip("export ").split("=")
                          for x in file.readlines() if "=" in x)
 
