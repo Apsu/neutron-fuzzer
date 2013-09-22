@@ -2,7 +2,7 @@
 """
 An OpenStack Neutron network API/RPC/namespace fuzzer/tester
 
-Usage: fuzz.py [-kpo] [-w <delay>] [-b <vms>]
+Usage: fuzz.py [-kpo] [-c <file>] [-w <delay>] [-b <vms>]
                [-a | -u <uuid> | -n <host>]
                [-d <dev>] [-e <type>] [-m <cidr>] <nets>
        fuzz.py -h | --help
@@ -21,6 +21,7 @@ SIGINT (^C) or SIGTERM will exit but still cleanup, unless --keep is passed.
 Options:
   -h, --help                  This help message
   -v, --version               Show version
+  -c, --creds=<file>          Credentials file to parse [default: ~/openrc]
 
 Tests:
   -k, --keep                  Don't cleanup after ourselves when exiting
@@ -129,6 +130,10 @@ def coalesce(nets, env={}, timeout=30):
     timer.cancel()
 
 
+def makepath(path):
+    return os.path.abspath(os.path.realpath(os.path.expandvars(os.path.expanduser(path))))
+
+
 # Entry point
 if __name__ == "__main__":
     try:
@@ -150,7 +155,7 @@ if __name__ == "__main__":
         # TODO: Check option values
 
         # Read openrc and parse key=value into key:value
-        with open(os.path.abspath("~/openrc")) as file:
+        with open(makepath(opts["--creds"])) as file:
             creds = dict(x.strip().lstrip("export ").split("=")
                          for x in file.readlines() if "=" in x)
 
