@@ -4,7 +4,7 @@ An OpenStack Neutron network API/RPC/namespace fuzzer/tester
 
 Usage: fuzz.py [-kpo] [-w <delay>] [-b <vms>]
                [-a | -u <uuid> | -n <host>]
-               [-d <dev>] [-e <type>] [-m <cidr>] [<nets>]
+               [-d <dev>] [-e <type>] [-m <cidr>] <nets>
        fuzz.py -h | --help
        fuzz.py -v | --version
 
@@ -39,7 +39,7 @@ Networks:
   -e <type>, --encap=<type>   Encapsulation type (vlan, gre) [default: vlan]
   -m <cidr>, --mask=<cidr>    CIDR template (% for octet to increment)
                               [default: 10.0.%.0/24]
-  <nets>                      Number of networks to create [default: 5]
+  <nets>                      Number of networks to create
 
 """
 
@@ -47,6 +47,7 @@ import os
 import time
 import shlex
 import docopt
+import signal
 import subprocess
 
 from threading import Timer
@@ -131,16 +132,20 @@ def coalesce(nets, env={}, timeout=30):
 # Entry point
 if __name__ == "__main__":
     try:
+        print("Initializing...")
+
+        # Catch SIGTERM/SIGINT
+        def abort(*args):
+            print("Abort requested! Aborting!")
+            raise SystemExit
+        signal.signal(signal.SIGTERM, abort)
+        signal.signal(signal.SIGINT, abort)
+
         # Snag options
         opts = docopt.docopt(__doc__, version="v1.0.0", options_first=True)
 
-        print(opts)
-
-
-        if opts["<nets>"]:
-            print("Nets:", opts["<nets>"])
-            opts["<nets>"] = int(opts["<nets>"])
-
+        # Fix to make life easier
+        opts["<nets>"] = int(opts["<nets>"])
 
         # TODO: Check option values
 
@@ -173,46 +178,46 @@ if __name__ == "__main__":
             raise SystemExit("Couldn't find any DHCP agents!")
 
         ### Happy Fuzz Times! ###
+        try:
+            # Make/wait on networks, then subnets
+            print("Making {} networks...".format(opts["<nets>"]))
+            makenets(opts["<nets>"], opts["--encap"], opts["--dev"], creds)
+            print("Making {} subnets...".format(opts["<nets>"]))
+            makesubs(opts["<nets>"], opts["--mask"], creds)
 
-        # Make/wait on networks, then subnets
-        print("Making {} networks...".format(opts["<nets>"]))
-        makenets(opts["<nets>"], opts["--encap"], opts["--dev"], creds)
-        print("Making {} subnets...".format(opts["<nets>"]))
-        makesubs(opts["<nets>"], opts["--mask"], creds)
+            # Make sure it worked
+            print("Waiting for resources...")
+            coalesce(opts["<nets>"], creds)
 
-        # Make sure it worked
-        print("Waiting for resources...")
-        coalesce(opts["<nets>"], creds)
+            # TODO: Manually schedule to agents
 
-        # TODO: Manually schedule to agents
+            # TODO: Boot VMs
 
-        # TODO: Boot VMs
+            # TODO: Tests
+            print("Starting test loop...")
 
-        # TODO: Tests
-        print("Starting test loop...")
+            # Pause if requested
+            # TODO: Moar better
+            if opts["--wait"]:
+                print("Sleeping {} seconds...".format(opts["--wait"]))
+                time.sleep(float(opts["--wait"]))
+        # Cleanup?
+        finally:
+            # Keeping what we created?
+            if not opts["--keep"]:
+                print("Running cleanup handlers...")
+                # Delete/wait on subnets, then networks
+                print("Deleting {} subnets...".format(opts["<nets>"]))
+                delsubs(opts["<nets>"], creds)
+                print("Deleting {} networks...".format(opts["<nets>"]))
+                delnets(opts["<nets>"], creds)
 
-        # Pause if requested
-        # TODO: Moar better
-        if opts["--wait"]:
-            print("Sleeping {} seconds...".format(opts["--wait"]))
-            time.sleep(float(opts["--wait"]))
+                # TODO: Delete VMs
 
-        # Keeping what we created?
-        if not opts["--keep"]:
-            # Delete/wait on subnets, then networks
-            print("Deleting {} subnets...".format(opts["<nets>"]))
-            delsubs(opts["<nets>"], creds)
-            print("Deleting {} networks...".format(opts["<nets>"]))
-            delnets(opts["<nets>"], creds)
-
-            # TODO: Delete VMs
-
-            # TODO: Unschedule agents/clean namespaces
-
+                # TODO: Unschedule agents/clean namespaces
     # Catchall
     except Exception as e:
         print("Caught exception:", e)
-        raise
-    # Cleanup?
-    finally:
-        pass
+        exit(1)
+    else:
+        exit(0)
