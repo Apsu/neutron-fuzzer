@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-An OpenStack Neutron network API/RPC/namespace fuzzer
+An OpenStack Neutron network API/RPC/namespace fuzzer/tester
 
-Usage: fuzz.py [-cpo] [-w <delay>] [-a | -u <uuid> | -n <host>]
-               [-d <dev>] [-e <type>] [-m <cidr>] [-b <vms>] [<nets>]
+Usage: fuzz.py [-kpo] [-w <delay>] [-b <vms>]
+               [-a | -u <uuid> | -n <host>]
+               [-d <dev>] [-e <type>] [-m <cidr>] [<nets>]
        fuzz.py -h | --help
        fuzz.py -v | --version
 
@@ -34,11 +35,11 @@ Agents:
   -n <host>, --node=<host>    Schedule networks to DHCP agent on <host>
 
 Networks:
-  <nets>                      Number of networks to create [default: 5]
   -d <dev>, --dev=<dev>       Bridge device for vlan net [default: ph-eth1]
   -e <type>, --encap=<type>   Encapsulation type (vlan, gre) [default: vlan]
   -m <cidr>, --mask=<cidr>    CIDR template (% for octet to increment)
                               [default: 10.0.%.0/24]
+  <nets>                      Number of networks to create [default: 5]
 
 """
 
@@ -47,6 +48,8 @@ import time
 import shlex
 import docopt
 import subprocess
+
+from threading import Timer
 
 # Lulz
 devnull = open(os.devnull)
@@ -104,14 +107,25 @@ def delsubs(nets, env={}):
 
 def coalesce(nets, env={}, timeout=30):
     """Wait for nets/subnets to show up, bail if timeout reached"""
-    #step = 0
-    #while step < timeout:
+    # Diaf
+    def bail(*msg):
+        raise SystemExit(msg[0])
+
+    # Watchdog
+    timer = Timer(timeout, bail, "Timeout reached waiting for networks/subnets!")
+    timer.start()
+
+    # TODO: Loop until coalesced
     stats = list(zip(*[line.split(",") for line in subprocess.check_output(
         shlex.split(
             "quantum net-list -f csv --quote none -c name -c subnets"),
         env=env,
-        universal_newlines=True).splitlines()[1:]]))
+        universal_newlines=True).splitlines()[1:]
+                       if line.split(",")[0].startswith("net")]))
     print(stats)
+
+    # Success, so cancel watchdog
+    timer.cancel()
 
 
 # Entry point
@@ -119,6 +133,14 @@ if __name__ == "__main__":
     try:
         # Snag options
         opts = docopt.docopt(__doc__, version="v1.0.0", options_first=True)
+
+        print(opts)
+
+
+        if opts["<nets>"]:
+            print("Nets:", opts["<nets>"])
+            opts["<nets>"] = int(opts["<nets>"])
+
 
         # TODO: Check option values
 
@@ -162,7 +184,12 @@ if __name__ == "__main__":
         print("Waiting for resources...")
         coalesce(opts["<nets>"], creds)
 
+        # TODO: Manually schedule to agents
+
+        # TODO: Boot VMs
+
         # TODO: Tests
+        print("Starting test loop...")
 
         # Pause if requested
         # TODO: Moar better
@@ -170,10 +197,17 @@ if __name__ == "__main__":
             print("Sleeping {} seconds...".format(opts["--wait"]))
             time.sleep(float(opts["--wait"]))
 
+        # Keeping what we created?
         if not opts["--keep"]:
             # Delete/wait on subnets, then networks
+            print("Deleting {} subnets...".format(opts["<nets>"]))
             delsubs(opts["<nets>"], creds)
+            print("Deleting {} networks...".format(opts["<nets>"]))
             delnets(opts["<nets>"], creds)
+
+            # TODO: Delete VMs
+
+            # TODO: Unschedule agents/clean namespaces
 
     # Catchall
     except Exception as e:
