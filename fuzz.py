@@ -53,35 +53,184 @@ import subprocess
 
 from threading import Timer
 
-# Lulz
-devnull = open(os.devnull)
+class Spawner:
+    """Wrap subprocess.Popen calls, store objects, allow .wait() on all"""
+    def __init__(self):
+        self.procs = []
+        # Python subprocess.DEVNULL only in Python 3.3
+        self.devnull = open(os.devnull)
+
+    def reset(self):
+        self.procs.clear()
+
+    def spawn(self, cmd, *args, env={}, quiet=False, reset=False):
+        if reset:
+            self.reset()
+
+        self.procs.append(
+            subprocess.Popen(
+                shlex.split(cmd.format(*args)),
+                stdout=self.devnull if quiet else None,
+                stderr=self.devnull if quiet else None,
+                env=env, universal_newlines=True))
+
+    def wait(self):
+        codes = [proc.wait() for proc in self.procs]
+        self.reset()
+        return codes
 
 
-def makenets(nets, encap, bridge, env={}):
-    """Create networks in parallel and map wait() across them"""
+class Credentials:
+    """Parse environment file and sanitize without using a shell"""
+    def __init__(self, path="~/openrc", env={}):
+        # Read file and parse key=value into key:value
+        # Strip whitespace, "export", ignore past ;, remove quotes
+        with open(self._makepath(path)) as file:
+            env.update = {k: v.strip("\"")
+                          for (k, v) in file.readlines()
+                          .strip().split(";")[0].lstrip("export ").split("=")
+                          if "=" in x and not x.startswith("#")}
+
+        # Fixup env by resolving bash variables ($var, ${var})
+        self.env = {k: v if not v.startswith("$") else env[v[1:]]
+                    if not v.startswith("${") else env[v[2:-1]]
+                    for (k, v) in env.items()}
+
+    def _makepath(self, path):
+        return os.path.abspath(
+            os.path.realpath(
+                os.path.expandvars(
+                    os.path.expanduser(path))))
+
+    def get(self):
+        return self.env
+
+
+class Agents:
+    """Handle DHCP agent scheduling"""
+    def __init__(self, node=None, uuid=None, multi=False, creds={}):
+        # Build sort key
+        self.key = "--node {}".format(node) if node else \
+                   "--id {}".format(uuid) if uuid else \
+                   "" if multi else None
+
+        if self.key:
+            # Get agents
+            self.agents = dict(line.split(",") for line in
+                          subprocess.check_output(
+                              shlex.split(
+                                  "quantum agent-list -f csv -c id -c host \
+                                  --quote none --agent_type='DHCP agent' {}"
+                                  .format(key)),
+                              env=creds,
+                              universal_newlines=True).splitlines()[1:])
+
+            # No matching agents?
+            if not self.agents:
+                raise SystemExit("Couldn't find any DHCP agents!")
+
+    def schedule(self, nets):
+        """Schedule networks to agents"""
+        # TODO
+        pass
+
+
+class Networks:
+    """
+    Create networks and subnets via quantum client
+    If keep is True, don't delete after creation
+    Will
+    """
+    def __init__(self, num=0, encap="vlan", cidr="10.0.%.0/24",
+                 creds=None, quiet=True, keep=False):
+        # Args
+        self.num = int(num)
+        self.encap = encap
+        self.creds = creds
+        self.quiet = quiet
+        self.keep = keep
+
+        # Status
+        self.nets = False
+        self.subs = False
+
+        # Spawner
+        self.spawner = Spawner()
+
+    def __enter__(self):
+        return self
+
+    def _create_nets(self, wait=True):
+        pass
+
+    def _create_subs(self, wait=True):
+        pass
+
+    def _delete_nets(self, wait=True):
+        pass
+
+    def _delete_subs(self, wait=True):
+        pass
+
+    def create(self):
+        for i in range(1, num + 1):
+            pass
+
+    def delete(self):
+        pass
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return
+
+    def __exit__(self, *args):
+        # Keeping what we created?
+        if not self.keep:
+            print("Running cleanup handlers...")
+            # Delete/wait on subnets, then networks
+            print("Deleting {} subnets...".format(opts["<nets>"]))
+            delsubs()
+            print("Deleting {} networks...".format(opts["<nets>"]))
+            delnets(opts["<nets>"], creds)
+
+                # TODO: Delete VMs
+
+                # TODO: Unschedule agents/clean namespaces
+
+        # Don't re-raise exception if we're in one
+        return true
+
+
+def docalls(cmd, *args, num=0, env={}, quiet=True):
+    # Lulz
+    devnull = open(os.devnull)
+
     return [proc.wait() for proc in
             [subprocess.Popen(
-                shlex.split(
-                    "quantum net-create --provider:network_type={1} \
-                    --provider:segmentation_id={0} \
-                    --provider:physical_network={2} net{0}"
-                    .format(index, encap, bridge)),
-                stdout=devnull,
-                stderr=devnull,
-                env=env, universal_newlines=True)
-             for index in range(1, nets + 1)]]
+                shlex.split(cmd.format(*args)),
+                stdout=devnull if quiet else None,
+                stderr=devnull if quiet else None,
+                env=env, universal_newlines=True)]
+            for index in range(1, num + 1)]
 
 
-def makesubs(nets, mask, env={}):
+def makenets(*args, **kwargs):
+    """Create networks in parallel and map wait() across them"""
+    return docall(
+        "quantum net-create --provider:network_type={1} \
+        --provider:segmentation_id={0} \
+        --provider:physical_network={2} net{0}"
+        , args)
+
+
+def makesubs(nets, mask, *args, **kwargs):
     """Create subnets in parallel and map wait() across them"""
     return [proc.wait() for proc in
-            [subprocess.Popen(
-                shlex.split(
-                    "quantum subnet-create --name sub{0} net{0} {1}"
-                    .format(index, mask.replace("%", str(index)))),
-                stdout=devnull,
-                stderr=devnull,
-                env=env, universal_newlines=True)
+            [docall(
+                "quantum subnet-create --name sub{0} net{0} {1}"
+                .format(index, mask.replace("%", str(index))), *args, **kwargs)
              for index in range(1, nets + 1)]]
 
 
@@ -118,20 +267,20 @@ def coalesce(nets, env={}, timeout=30):
     timer.start()
 
     # TODO: Loop until coalesced
+    time.sleep(5)
     stats = list(zip(*[line.split(",") for line in subprocess.check_output(
         shlex.split(
             "quantum net-list -f csv --quote none -c name -c subnets"),
         env=env,
         universal_newlines=True).splitlines()[1:]
-                       if line.split(",")[0].startswith("net")]))
+#                       if line.split(",")[0].startswith("net")
+                   ]))
     print(stats)
 
     # Success, so cancel watchdog
     timer.cancel()
 
 
-def makepath(path):
-    return os.path.abspath(os.path.realpath(os.path.expandvars(os.path.expanduser(path))))
 
 
 # Entry point
@@ -148,47 +297,23 @@ if __name__ == "__main__":
 
         # Snag options
         opts = docopt.docopt(__doc__, version="v1.0.0", options_first=True)
-
-        # Fix to make life easier
-        opts["<nets>"] = int(opts["<nets>"])
+        print(opts)
 
         # TODO: Check option values
 
-        # Read openrc and parse key=value into key:value
-        with open(makepath(opts["--creds"])) as file:
-            creds = dict(x.strip().lstrip("export ").split("=")
-                         for x in file.readlines() if "=" in x)
+        creds = Credentials("~/openrc", os.environ)
+        agents = Agents(opts["--node"], opts["--uuid"], opts["--all"], creds.get())
 
-        # Fixup creds by resolving bash variables
-        creds = {k: v if not v.startswith("$") else creds[v[1:]]
-                 if not v.startswith("${") else creds[v[2:-1]]
-                 for (k, v) in creds.items()}
 
-        # Build sort key
-        key = "--node {}".format(opts["--node"]) if opts["--node"] else \
-              "--id {}".format(opts["--uuid"]) if opts["--uuid"] else ""
 
-        # Get agents
-        agents = dict(line.split(",") for line in
-                      subprocess.check_output(
-                          shlex.split(
-                              "quantum agent-list -f csv -c id -c host \
-                              --quote none --agent_type='DHCP agent' {}"
-                              .format(key)),
-                          env=creds,
-                          universal_newlines=True).splitlines()[1:])
-
-        # No matching agents?
-        if key and not agents:
-            raise SystemExit("Couldn't find any DHCP agents!")
 
         ### Happy Fuzz Times! ###
         try:
             # Make/wait on networks, then subnets
             print("Making {} networks...".format(opts["<nets>"]))
-            makenets(opts["<nets>"], opts["--encap"], opts["--dev"], creds)
+            makenets(opts["<nets>"], opts["--encap"], opts["--dev"], creds, quiet=False)
             print("Making {} subnets...".format(opts["<nets>"]))
-            makesubs(opts["<nets>"], opts["--mask"], creds)
+            makesubs(opts["<nets>"], opts["--mask"], creds, quiet=False)
 
             # Make sure it worked
             print("Waiting for resources...")
@@ -208,18 +333,6 @@ if __name__ == "__main__":
                 time.sleep(float(opts["--wait"]))
         # Cleanup?
         finally:
-            # Keeping what we created?
-            if not opts["--keep"]:
-                print("Running cleanup handlers...")
-                # Delete/wait on subnets, then networks
-                print("Deleting {} subnets...".format(opts["<nets>"]))
-                delsubs(opts["<nets>"], creds)
-                print("Deleting {} networks...".format(opts["<nets>"]))
-                delnets(opts["<nets>"], creds)
-
-                # TODO: Delete VMs
-
-                # TODO: Unschedule agents/clean namespaces
     # Catchall
     except Exception as e:
         print("Caught exception:", e)
